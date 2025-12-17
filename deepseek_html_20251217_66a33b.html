@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ADC 滤波器算法对比模拟器</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #1e1e1e;
+            color: #e0e0e0;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h2 {
+            margin-bottom: 10px;
+            color: #61dafb;
+        }
+
+        .controls {
+            background-color: #2d2d2d;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            justify-content: center;
+            width: 100%;
+            max-width: 800px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        label {
+            font-size: 0.85rem;
+            margin-bottom: 5px;
+            color: #aaa;
+        }
+
+        input[type="range"] {
+            width: 150px;
+            cursor: pointer;
+        }
+
+        .value-display {
+            font-size: 0.8rem;
+            color: #61dafb;
+            margin-left: 5px;
+        }
+        
+        select {
+            background-color: #333;
+            color: #e0e0e0;
+            border: 1px solid #555;
+            border-radius: 4px;
+            padding: 5px 10px;
+            font-size: 0.9rem;
+            width: 200px;
+        }
+
+        .canvas-container {
+            position: relative;
+            width: 100%;
+            max-width: 800px;
+            height: 400px;
+            background-color: #000;
+            border: 2px solid #333;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        .legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin-top: 10px;
+            font-size: 0.9rem;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+        }
+
+        .color-box {
+            width: 12px;
+            height: 12px;
+            margin-right: 5px;
+            border-radius: 2px;
+        }
+        
+        .info-panel {
+            background-color: #2d2d2d;
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            width: 100%;
+            max-width: 800px;
+            font-size: 0.85rem;
+            color: #ccc;
+            border-left: 4px solid #61dafb;
+        }
+        
+        .metric-panel {
+            background-color: #2d2d2d;
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-top: 10px;
+            width: 100%;
+            max-width: 800px;
+            font-size: 0.8rem;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+        }
+        
+        .metric {
+            text-align: center;
+        }
+        
+        .metric-value {
+            font-size: 1rem;
+            font-weight: bold;
+            color: #61dafb;
+        }
+        
+        .metric-label {
+            font-size: 0.7rem;
+            color: #aaa;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>ADC 滤波器算法对比模拟器</h2>
+
+    <div class="controls">
+        <div class="control-group">
+            <label>滤波器类型 <span id="val-algo" class="value-display">DC补偿器</span></label>
+            <select id="filterAlgorithm">
+                <option value="dcblocker">DC补偿器 (DC Blocker)</option>
+                <option value="medianavg">移动中值+平均组合</option>
+                <option value="kalman">卡尔曼滤波器</option>
+                <option value="wavelet">小波去噪</option>
+                <option value="adaptive">自适应DC补偿</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label>漂移幅度 (Drift Amp) <span id="val-drift" class="value-display">80</span></label>
+            <input type="range" id="driftAmp" min="0" max="150" value="80">
+        </div>
+        <div class="control-group">
+            <label>漂移速度 (Drift Freq) <span id="val-speed" class="value-display">10</span></label>
+            <input type="range" id="driftSpeed" min="1" max="50" value="10">
+        </div>
+        <div class="control-group">
+            <label>高频噪声 (HF Noise) <span id="val-noise" class="value-display">5</span></label>
+            <input type="range" id="noiseAmp" min="0" max="20" value="5">
+        </div>
+        <div class="control-group">
+            <label>滤波强度 <span id="val-intensity" class="value-display">0.995</span></label>
+            <input type="range" id="filterIntensity" min="800" max="999" value="995">
+        </div>
+    </div>
+
+    <div class="canvas-container">
+        <canvas id="scopeCanvas"></canvas>
+    </div>
+
+    <div class="legend">
+        <div class="legend-item">
+            <div class="color-box" style="background-color: #ff4444;"></div>
+            <span>原始数据 (Raw)</span>
+        </div>
+        <div class="legend-item">
+            <div class="color-box" style="background-color: #4444ff;"></div>
+            <span>真实漂移 (True Drift)</span>
+        </div>
+        <div class="legend-item">
+            <div class="color-box" style="background-color: #00ff00;"></div>
+            <span>滤波后 (Filtered)</span>
+        </div>
+        <div class="legend-item">
+            <div class="color-box" style="background-color: #ffff00;"></div>
+            <span>基线估计 (Baseline Est.)</span>
+        </div>
+    </div>
+    
+    <div class="metric-panel">
+        <div class="metric">
+            <div class="metric-value" id="metric-snr">0.0 dB</div>
+            <div class="metric-label">信噪比改善</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value" id="metric-drift-error">0.0</div>
+            <div class="metric-label">漂移估计误差</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value" id="metric-response">0.0 ms</div>
+            <div class="metric-label">响应时间</div>
+        </div>
+    </div>
+    
+    <div class="info-panel" id="algorithmInfo">
+        <strong>DC补偿器 (DC Blocker)</strong>: 使用高通滤波器原理去除低频漂移，公式: y[n] = x[n] - x[n-1] + α * y[n-1]
+    </div>
+
+    <script>
+        // --- 1. 基础设置 ---
+        const canvas = document.getElementById('scopeCanvas');
+        const ctx = canvas.getContext('2d');
+        const algorithmInfo = document.getElementById('algorithmInfo');
+        
+        // 适应屏幕分辨率
+        function resizeCanvas() {
+            canvas.width = canvas.parentElement.clientWidth;
+            canvas.height = canvas.parentElement.clientHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // 参数控制
+        const params = {
+            driftAmp: 80,
+            driftSpeed: 0.002,
+            noiseAmp: 5,
+            intensity: 0.995,
+            algorithm: 'dcblocker'
+        };
+
+        // UI 绑定
+        document.getElementById('driftAmp').oninput = function() { 
+            params.driftAmp = parseInt(this.value); 
+            document.getElementById('val-drift').innerText = this.value;
+        };
+        document.getElementById('driftSpeed').oninput = function() { 
+            let val = parseInt(this.value);
+            params.driftSpeed = val * 0.0002; 
+            document.getElementById('val-speed').innerText = val;
+        };
+        document.getElementById('noiseAmp').oninput = function() { 
+            params.noiseAmp = parseInt(this.value); 
+            document.getElementById('val-noise').innerText = this.value;
+        };
+        document.getElementById('filterIntensity').oninput = function() { 
+            let val = parseInt(this.value);
+            params.intensity = val / 1000; 
+            document.getElementById('val-intensity').innerText = params.intensity.toFixed(3);
+        };
+        document.getElementById('filterAlgorithm').oninput = function() { 
+            params.algorithm = this.value;
+            document.getElementById('val-algo').innerText = this.options[this.selectedIndex].text;
+            updateAlgorithmInfo();
+            resetFilters();
+        };
+
+        // 更新算法信息面板
+        function updateAlgorithmInfo() {
+            const infoMap = {
+                'dcblocker': '<strong>DC补偿器 (DC Blocker)</strong>: 使用高通滤波器原理去除低频漂移，公式: y[n] = x[n] - x[n-1] + α * y[n-1]。基线估计 = 原始 - 滤波后',
+                'medianavg': '<strong>移动中值+平均组合</strong>: 先使用中值滤波器去除脉冲噪声，再使用移动平均平滑信号。基线估计 = 原始 - 滤波后（近似）',
+                'kalman': '<strong>卡尔曼滤波器</strong>: 基于状态估计的最优滤波器。基线估计 = 卡尔曼状态X（最优估计）',
+                'wavelet': '<strong>小波去噪</strong>: 使用多尺度分析分离信号与噪声。基线估计 = 小波近似系数（低频部分）',
+                'adaptive': '<strong>自适应DC补偿</strong>: 动态调整时间常数。基线估计 = 慢速通道输出（专门跟踪漂移）'
+            };
+            algorithmInfo.innerHTML = infoMap[params.algorithm];
+        }
+
+        // --- 2. 信号生成工具 ---
+        const perm = [];
+        let gradP = [];
+        
+        function seedNoise() {
+            gradP = [];
+            for(let i=0; i<256; i++) {
+                gradP.push(Math.random() * 2 - 1);
+            }
+        }
+        seedNoise();
+
+        function getSmoothNoise(t) {
+            const index = Math.floor(t) % 256;
+            const nextIndex = (index + 1) % 256;
+            const factor = t - Math.floor(t);
+            const smoothFactor = (1 - Math.cos(factor * Math.PI)) / 2;
+            return gradP[index] * (1 - smoothFactor) + gradP[nextIndex] * smoothFactor;
+        }
+
+        // --- 3. 滤波器实现 ---
+        
+        // 1) DC Blocker 滤波器
+        let dcPrevX = 0;
+        let dcPrevY = 0;
+        
+        function dcBlocker(input, alpha) {
+            let output = input - dcPrevX + alpha * dcPrevY;
+            dcPrevX = input;
+            dcPrevY = output;
+            return output;
+        }
+        
+        // 2) 移动中值+移动平均组合滤波器
+        const medianWindow = 5;
+        const avgWindow = 10;
+        let medianBuffer = new Array(medianWindow).fill(0);
+        let avgBuffer = new Array(avgWindow).fill(0);
+        let medianIdx = 0;
+        let avgIdx = 0;
+        
+        function medianAvgFilter(input) {
+            // 中值滤波
+            medianBuffer[medianIdx] = input;
+            medianIdx = (medianIdx + 1) % medianWindow;
+            
+            const sorted = [...medianBuffer].sort((a,b) => a-b);
+            const median = sorted[Math.floor(medianWindow/2)];
+            
+            // 移动平均
+            avgBuffer[avgIdx] = median;
+            avgIdx = (avgIdx + 1) % avgWindow;
+            
+            const sum = avgBuffer.reduce((a,b) => a+b);
+            return sum / avgWindow;
+        }
+        
+        // 3) 卡尔曼滤波器
+        class KalmanFilter {
+            constructor(Q = 0.1, R = 1) {
+                this.Q = Q; // 过程噪声
+                this.R = R; // 测量噪声
+                this.P = 1; // 估计误差协方差
+                this.X = 0; // 估计值
+                this.lastUpdateTime = 0;
+            }
+            
+            update(measurement) {
+                // 预测
+                const X_pred = this.X;
+                const P_pred = this.P + this.Q;
+                
+                // 更新
+                const K = P_pred / (P_pred + this.R); // 卡尔曼增益
+                this.X = X_pred + K * (measurement - X_pred);
+                this.P = (1 - K) * P_pred;
+                
+                return this.X;
+            }
+            
+            reset() {
+                this.P = 1;
+                this.X = 0;
+            }
+        }
+        const kalmanFilter = new KalmanFilter(0.01, params.noiseAmp * 0.5);
+        
+        // 4) 小波去噪滤波器 (改进版)
+        const waveletWindow = 32;
+        let waveletBuffer = new Array(waveletWindow).fill(0);
+        let waveletIdx = 0;
+        
+        function waveletDenoise(input) {
+            waveletBuffer[waveletIdx] = input;
+            waveletIdx = (waveletIdx + 1) % waveletWindow;
+            
+            // 计算移动平均作为基线（近似小波的低频部分）
+            const baseline = waveletBuffer.reduce((a,b) => a+b) / waveletWindow;
+            
+            // 对细节系数进行阈值处理
+            const detail = input - baseline;
+            const threshold = params.noiseAmp * 0.7;
+            
+            let filteredDetail;
+            if(Math.abs(detail) > threshold) {
+                // 软阈值
+                filteredDetail = Math.sign(detail) * (Math.abs(detail) - threshold);
+            } else {
+                filteredDetail = 0;
+            }
+            
+            return {
+                filtered: baseline + filteredDetail,
+                baseline: baseline
+            };
+        }
+        
+        // 5) 自适应DC补偿滤波器
+        class AdaptiveDCBlocker {
+            constructor(slowAlpha = 0.995, fastAlpha = 0.9) {
+                this.slowAlpha = slowAlpha;
+                this.fastAlpha = fastAlpha;
+                this.dcSlow = 0;
+                this.dcFast = 0;
+                this.output = 0;
+            }
+            
+            process(input) {
+                // 快速通道：跟踪信号突变
+                this.dcFast = this.fastAlpha * this.dcFast + (1 - this.fastAlpha) * input;
+                
+                // 慢速通道：跟踪基线漂移
+                this.dcSlow = this.slowAlpha * this.dcSlow + (1 - this.slowAlpha) * input;
+                
+                // 检测信号突变
+                const diff = Math.abs(this.dcFast - this.dcSlow);
+                const threshold = params.noiseAmp * 3;
+                const isSignalChange = diff > threshold;
+                
+                // 选择跟踪源
+                const dcEstimate = isSignalChange ? this.dcSlow : (this.dcFast + this.dcSlow) / 2;
+                
+                this.output = input - dcEstimate;
+                return {filtered: this.output, baseline: dcEstimate};
+            }
+            
+            reset() {
+                this.dcSlow = 0;
+                this.dcFast = 0;
+                this.output = 0;
+            }
+        }
+        const adaptiveFilter = new AdaptiveDCBlocker(0.995, 0.9);
+
+        // 重置所有滤波器状态
+        function resetFilters() {
+            dcPrevX = 0;
+            dcPrevY = 0;
+            medianBuffer.fill(0);
+            avgBuffer.fill(0);
+            waveletBuffer.fill(0);
+            kalmanFilter.reset();
+            adaptiveFilter.reset();
+        }
+
+        // --- 4. 性能指标计算 ---
+        let lastSignalChangeTime = 0;
+        let responseStartValue = 0;
+        
+        function updateMetrics(raw, filtered, baseline, trueDrift) {
+            // 1. 信噪比改善 (简化计算)
+            const rawVariance = Math.pow(params.noiseAmp, 2);
+            const filteredVariance = Math.pow(params.noiseAmp * 0.3, 2); // 假设滤波后噪声减小
+            const snrImprovement = 10 * Math.log10(rawVariance / filteredVariance);
+            
+            // 2. 漂移估计误差
+            const driftError = Math.abs(baseline - trueDrift);
+            
+            // 3. 响应时间检测（当信号突变时）
+            if (Math.abs(filtered - responseStartValue) > 20) {
+                lastSignalChangeTime = performance.now();
+                responseStartValue = filtered;
+            }
+            const responseTime = performance.now() - lastSignalChangeTime;
+            
+            // 更新显示
+            document.getElementById('metric-snr').innerText = snrImprovement.toFixed(1) + ' dB';
+            document.getElementById('metric-drift-error').innerText = driftError.toFixed(1);
+            document.getElementById('metric-response').innerText = responseTime.toFixed(0) + ' ms';
+        }
+
+        // --- 5. 主循环与绘图 ---
+        
+        // 数据缓冲区
+        const maxPoints = 800;
+        const dataRaw = new Array(maxPoints).fill(0);
+        const dataTrueDrift = new Array(maxPoints).fill(0);
+        const dataFiltered = new Array(maxPoints).fill(0);
+        const dataBaseline = new Array(maxPoints).fill(0);
+        
+        let time = 0;
+        let signalBase = 0;
+        let signalTimer = 0;
+
+        function loop() {
+            // 1. 生成模拟数据
+            time += 1;
+            
+            // A. 真实漂移（我们知道这个值，但滤波器不知道）
+            let trueDrift = getSmoothNoise(time * params.driftSpeed) * params.driftAmp;
+            
+            // B. 高频噪声
+            let hfNoise = (Math.random() - 0.5) * params.noiseAmp * 2;
+
+            // C. 有用信号（方波）
+            signalTimer++;
+            if (signalTimer > 200) {
+                signalBase = (signalBase === 0) ? 50 : 0;
+                signalTimer = 0;
+            }
+
+            // 合成原始数据
+            let rawSample = signalBase + trueDrift + hfNoise;
+
+            // 2. 根据选择的算法进行滤波处理
+            let filteredSample = 0;
+            let baselineEstimate = 0;
+            
+            switch(params.algorithm) {
+                case 'dcblocker':
+                    filteredSample = dcBlocker(rawSample, params.intensity);
+                    baselineEstimate = rawSample - filteredSample;
+                    break;
+                    
+                case 'medianavg':
+                    filteredSample = medianAvgFilter(rawSample);
+                    // 对于中值滤波，基线估计不准确，但可以近似计算
+                    baselineEstimate = rawSample - filteredSample;
+                    break;
+                    
+                case 'kalman':
+                    filteredSample = kalmanFilter.update(rawSample);
+                    // 卡尔曼滤波器的状态X是对信号+基线的估计
+                    baselineEstimate = kalmanFilter.X;
+                    break;
+                    
+                case 'wavelet':
+                    const waveletResult = waveletDenoise(rawSample);
+                    filteredSample = waveletResult.filtered;
+                    baselineEstimate = waveletResult.baseline;
+                    break;
+                    
+                case 'adaptive':
+                    const adaptiveResult = adaptiveFilter.process(rawSample);
+                    filteredSample = adaptiveResult.filtered;
+                    baselineEstimate = adaptiveResult.baseline;
+                    break;
+                    
+                default:
+                    filteredSample = dcBlocker(rawSample, params.intensity);
+                    baselineEstimate = rawSample - filteredSample;
+            }
+
+            // 3. 更新性能指标
+            updateMetrics(rawSample, filteredSample, baselineEstimate, trueDrift);
+
+            // 4. 更新缓冲区
+            dataRaw.shift(); dataRaw.push(rawSample);
+            dataTrueDrift.shift(); dataTrueDrift.push(trueDrift);
+            dataFiltered.shift(); dataFiltered.push(filteredSample);
+            dataBaseline.shift(); dataBaseline.push(baselineEstimate);
+
+            // 5. 绘图
+            draw();
+
+            requestAnimationFrame(loop);
+        }
+
+        function draw() {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            const centerY = canvas.height / 2;
+            const scaleX = canvas.width / maxPoints;
+            
+            // 计算数据范围用于自动缩放
+            const allData = [...dataRaw, ...dataTrueDrift, ...dataFiltered, ...dataBaseline];
+            const maxVal = Math.max(...allData);
+            const minVal = Math.min(...allData);
+            const dataRange = Math.max(Math.abs(maxVal), Math.abs(minVal)) * 1.5;
+            const scaleY = canvas.height / (dataRange * 2);
+
+            // 绘制网格
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            for(let y = 0; y <= canvas.height; y += 50) {
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+            }
+            for(let x = 0; x <= canvas.width; x += 100) {
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+            }
+            ctx.stroke();
+            
+            // 绘制零线
+            ctx.strokeStyle = '#666';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(0, centerY);
+            ctx.lineTo(canvas.width, centerY);
+            ctx.stroke();
+
+            // 绘制真实漂移 (蓝色，细线)
+            ctx.strokeStyle = '#4444ff';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            for (let i = 0; i < maxPoints; i++) {
+                let x = i * scaleX;
+                let y = centerY - dataTrueDrift[i] * scaleY;
+                if (i===0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+
+            // 绘制基线估计 (黄色，虚线)
+            ctx.strokeStyle = '#ffff00';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            for (let i = 0; i < maxPoints; i++) {
+                let x = i * scaleX;
+                let y = centerY - dataBaseline[i] * scaleY;
+                if (i===0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // 绘制原始数据 (红色)
+            ctx.strokeStyle = '#ff4444';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            for (let i = 0; i < maxPoints; i++) {
+                let x = i * scaleX;
+                let y = centerY - dataRaw[i] * scaleY;
+                if (i===0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+
+            // 绘制滤波后数据 (绿色)
+            ctx.strokeStyle = '#00ff00';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            for (let i = 0; i < maxPoints; i++) {
+                let x = i * scaleX;
+                let y = centerY - dataFiltered[i] * scaleY;
+                if (i===0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+            
+            // 绘制算法名称和指标
+            ctx.fillStyle = 'rgba(255,255,255,0.9)';
+            ctx.font = 'bold 16px Arial';
+            const algoName = document.getElementById('filterAlgorithm').options[document.getElementById('filterAlgorithm').selectedIndex].text;
+            ctx.fillText(`当前算法: ${algoName}`, 10, 25);
+            
+            ctx.font = '14px Arial';
+            ctx.fillText(`基线估计误差: ${document.getElementById('metric-drift-error').innerText}`, 10, 50);
+        }
+
+        // 初始化算法信息
+        updateAlgorithmInfo();
+        
+        // 启动
+        loop();
+
+    </script>
+</body>
+</html>
