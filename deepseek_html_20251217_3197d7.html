@@ -67,6 +67,41 @@
             font-size: 0.9rem;
             width: 200px;
         }
+        
+        .weight-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-top: 5px;
+        }
+        
+        .weight-btn {
+            background-color: #444;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            padding: 5px 10px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        
+        .weight-btn:hover {
+            background-color: #555;
+        }
+        
+        .weight-btn:active {
+            background-color: #666;
+        }
+        
+        .weight-input {
+            background-color: #333;
+            color: #e0e0e0;
+            border: 1px solid #555;
+            border-radius: 4px;
+            padding: 5px 10px;
+            width: 60px;
+            text-align: center;
+        }
 
         .canvas-container {
             position: relative;
@@ -126,7 +161,7 @@
             max-width: 800px;
             font-size: 0.8rem;
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(4, 1fr);
             gap: 10px;
         }
         
@@ -168,6 +203,45 @@
             50% { opacity: 0.5; }
             100% { opacity: 1; }
         }
+        
+        .weight-history {
+            background-color: #2d2d2d;
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-top: 10px;
+            width: 100%;
+            max-width: 800px;
+            font-size: 0.8rem;
+        }
+        
+        .weight-history h3 {
+            margin: 0 0 10px 0;
+            font-size: 0.9rem;
+            color: #aaa;
+        }
+        
+        .weight-history-list {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .weight-history-item {
+            background-color: #333;
+            padding: 5px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        
+        .weight-history-item:hover {
+            background-color: #444;
+        }
+        
+        .weight-history-item.active {
+            background-color: #61dafb;
+            color: #000;
+        }
     </style>
 </head>
 <body>
@@ -186,21 +260,49 @@
                 <option value="combined">组合滤波器 (推荐)</option>
             </select>
         </div>
+        
+        <div class="control-group">
+            <label>重量设置 (克)</label>
+            <div class="weight-controls">
+                <input type="number" id="weightInput" class="weight-input" value="0" min="0" max="500" step="10">
+                <button id="setWeightBtn" class="weight-btn">设置</button>
+                <button id="add10g" class="weight-btn">+10g</button>
+                <button id="add50g" class="weight-btn">+50g</button>
+                <button id="clearWeight" class="weight-btn">清零</button>
+            </div>
+        </div>
+        
         <div class="control-group">
             <label>漂移幅度 (Drift Amp) <span id="val-drift" class="value-display">80</span></label>
             <input type="range" id="driftAmp" min="0" max="150" value="80">
         </div>
+        
         <div class="control-group">
             <label>漂移速度 (Drift Freq) <span id="val-speed" class="value-display">10</span></label>
             <input type="range" id="driftSpeed" min="1" max="50" value="10">
         </div>
+        
         <div class="control-group">
             <label>高频噪声 (HF Noise) <span id="val-noise" class="value-display">5</span></label>
             <input type="range" id="noiseAmp" min="0" max="20" value="5">
         </div>
+        
         <div class="control-group">
             <label>滤波强度 <span id="val-intensity" class="value-display">0.995</span></label>
             <input type="range" id="filterIntensity" min="800" max="999" value="995">
+        </div>
+    </div>
+
+    <div class="weight-history">
+        <h3>常用重量 (点击设置):</h3>
+        <div class="weight-history-list" id="commonWeights">
+            <div class="weight-history-item" data-weight="0">清零 (0g)</div>
+            <div class="weight-history-item" data-weight="10">10g</div>
+            <div class="weight-history-item" data-weight="20">20g</div>
+            <div class="weight-history-item" data-weight="50">50g</div>
+            <div class="weight-history-item" data-weight="100">100g</div>
+            <div class="weight-history-item" data-weight="200">200g</div>
+            <div class="weight-history-item" data-weight="500">500g</div>
         </div>
     </div>
 
@@ -225,7 +327,11 @@
     
     <div class="metric-panel">
         <div class="metric">
-            <div class="metric-value" id="metric-current">0.0</div>
+            <div class="metric-value" id="metric-target">0.0 g</div>
+            <div class="metric-label">设定重量</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value" id="metric-current">0.0 g</div>
             <div class="metric-label">当前读数</div>
         </div>
         <div class="metric">
@@ -234,7 +340,7 @@
         </div>
         <div class="metric">
             <div class="metric-value" id="metric-response">0.0</div>
-            <div class="metric-label">响应时间 (ms)</div>
+            <div class="metric-label">稳定时间 (ms)</div>
         </div>
     </div>
     
@@ -262,7 +368,9 @@
             driftSpeed: 0.002,
             noiseAmp: 5,
             intensity: 0.995,
-            algorithm: 'dcblocker'
+            algorithm: 'dcblocker',
+            targetWeight: 0, // 目标重量
+            actualWeight: 0  // 当前实际重量（模拟时会逐渐变化到目标重量）
         };
 
         // UI 绑定
@@ -290,6 +398,58 @@
             updateAlgorithmInfo();
             resetFilters();
         };
+
+        // 重量控制绑定
+        document.getElementById('setWeightBtn').onclick = function() {
+            const weight = parseInt(document.getElementById('weightInput').value);
+            if (!isNaN(weight) && weight >= 0 && weight <= 500) {
+                setTargetWeight(weight);
+            }
+        };
+        
+        document.getElementById('add10g').onclick = function() {
+            const currentWeight = params.targetWeight;
+            const newWeight = currentWeight + 10;
+            if (newWeight <= 500) {
+                document.getElementById('weightInput').value = newWeight;
+                setTargetWeight(newWeight);
+            }
+        };
+        
+        document.getElementById('add50g').onclick = function() {
+            const currentWeight = params.targetWeight;
+            const newWeight = currentWeight + 50;
+            if (newWeight <= 500) {
+                document.getElementById('weightInput').value = newWeight;
+                setTargetWeight(newWeight);
+            }
+        };
+        
+        document.getElementById('clearWeight').onclick = function() {
+            document.getElementById('weightInput').value = 0;
+            setTargetWeight(0);
+        };
+        
+        // 常用重量点击事件
+        document.querySelectorAll('.weight-history-item').forEach(item => {
+            item.addEventListener('click', function() {
+                const weight = parseInt(this.getAttribute('data-weight'));
+                document.getElementById('weightInput').value = weight;
+                setTargetWeight(weight);
+                
+                // 更新激活状态
+                document.querySelectorAll('.weight-history-item').forEach(i => {
+                    i.classList.remove('active');
+                });
+                this.classList.add('active');
+            });
+        });
+
+        // 设置目标重量
+        function setTargetWeight(weight) {
+            params.targetWeight = weight;
+            document.getElementById('metric-target').innerText = weight.toFixed(1) + ' g';
+        }
 
         // 更新算法信息面板
         function updateAlgorithmInfo() {
@@ -497,6 +657,8 @@
                 this.idx = 0;
                 this.lastStableValue = 0;
                 this.stableCount = 0;
+                this.lastWeightChangeTime = 0;
+                this.stabilizationTime = 0;
             }
             
             update(filteredValue) {
@@ -514,15 +676,21 @@
                     // 连续稳定多次后，更新稳定值
                     if (this.stableCount > 10) {
                         this.lastStableValue = mean;
+                        // 计算稳定时间（从最近一次重量变化开始）
+                        if (this.lastWeightChangeTime > 0) {
+                            this.stabilizationTime = performance.now() - this.lastWeightChangeTime;
+                        }
                     }
                 } else {
                     this.stableCount = 0;
+                    this.stabilizationTime = 0;
                 }
                 
                 return {
                     predicted: this.lastStableValue,
                     variance: variance,
-                    isStable: variance < this.stabilityThreshold
+                    isStable: variance < this.stabilityThreshold,
+                    stabilizationTime: this.stabilizationTime
                 };
             }
             
@@ -530,6 +698,8 @@
                 this.buffer.fill(0);
                 this.lastStableValue = 0;
                 this.stableCount = 0;
+                this.lastWeightChangeTime = performance.now();
+                this.stabilizationTime = 0;
             }
         }
         
@@ -554,11 +724,14 @@
         let lastSignalChangeTime = 0;
         let responseStartValue = 0;
         
-        function updateMetrics(raw, filtered, predicted, isStable) {
-            // 1. 当前读数
-            document.getElementById('metric-current').innerText = predicted.toFixed(1);
+        function updateMetrics(raw, filtered, predicted, isStable, stabilizationTime, targetWeight) {
+            // 1. 目标重量
+            document.getElementById('metric-target').innerText = targetWeight.toFixed(1) + ' g';
             
-            // 2. 稳定性指标
+            // 2. 当前读数
+            document.getElementById('metric-current').innerText = predicted.toFixed(1) + ' g';
+            
+            // 3. 稳定性指标
             const stabilityValue = isStable ? 0.0 : 99.9;
             document.getElementById('metric-stability').innerText = stabilityValue.toFixed(1);
             
@@ -566,13 +739,8 @@
             const indicator = document.getElementById('stability-indicator');
             indicator.className = 'stability-indicator ' + (isStable ? 'stable' : 'unstable');
             
-            // 3. 响应时间检测
-            if (Math.abs(filtered - responseStartValue) > 10) {
-                lastSignalChangeTime = performance.now();
-                responseStartValue = filtered;
-            }
-            const responseTime = performance.now() - lastSignalChangeTime;
-            document.getElementById('metric-response').innerText = responseTime.toFixed(0);
+            // 4. 稳定时间
+            document.getElementById('metric-response').innerText = isStable ? stabilizationTime.toFixed(0) : '--';
         }
 
         // --- 5. 主循环与绘图 ---
@@ -584,8 +752,8 @@
         const dataPredicted = new Array(maxPoints).fill(0);
         
         let time = 0;
-        let signalBase = 0; // 模拟电子秤的真实重量值
-        let signalTimer = 0;
+        let actualWeight = 0; // 当前实际重量（模拟时会逐渐变化到目标重量）
+        let weightTransitionProgress = 1; // 1表示已完成过渡，0表示刚开始过渡
 
         function loop() {
             // 1. 生成模拟数据
@@ -596,25 +764,32 @@
             
             // B. 高频噪声
             let hfNoise = (Math.random() - 0.5) * params.noiseAmp * 2;
-
-            // C. 模拟重量变化（每200个采样点变化一次）
-            signalTimer++;
-            if (signalTimer > 200) {
-                // 随机变化重量：0, 50, 100, 150 之间切换
-                const possibleValues = [0, 50, 100, 150];
-                const currentIndex = possibleValues.indexOf(signalBase);
-                const nextIndex = (currentIndex + 1) % possibleValues.length;
-                signalBase = possibleValues[nextIndex];
-                signalTimer = 0;
+            
+            // C. 模拟重量变化（平滑过渡到目标重量）
+            if (weightTransitionProgress < 1) {
+                // 平滑过渡：使用缓动函数
+                weightTransitionProgress += 0.02; // 每次增加2%
+                if (weightTransitionProgress > 1) weightTransitionProgress = 1;
+                
+                // 使用三次缓动函数
+                const t = weightTransitionProgress;
+                const easedT = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+                
+                // 更新实际重量
+                const weightDiff = params.targetWeight - actualWeight;
+                actualWeight += weightDiff * easedT;
+            } else {
+                actualWeight = params.targetWeight;
             }
 
             // 合成原始数据 = 真实重量 + 漂移 + 噪声
-            let rawSample = signalBase + trueDrift + hfNoise;
+            let rawSample = actualWeight + trueDrift + hfNoise;
 
             // 2. 根据选择的算法进行滤波处理
             let filteredSample = 0;
             let predictedValue = 0;
             let isStable = false;
+            let stabilizationTime = 0;
             
             switch(params.algorithm) {
                 case 'dcblocker':
@@ -623,6 +798,7 @@
                     const dcResult = stabilityFilter.update(filteredSample);
                     predictedValue = dcResult.predicted;
                     isStable = dcResult.isStable;
+                    stabilizationTime = dcResult.stabilizationTime;
                     break;
                     
                 case 'medianavg':
@@ -630,6 +806,7 @@
                     const maResult = stabilityFilter.update(filteredSample);
                     predictedValue = maResult.predicted;
                     isStable = maResult.isStable;
+                    stabilizationTime = maResult.stabilizationTime;
                     break;
                     
                 case 'kalman':
@@ -637,6 +814,7 @@
                     const kfResult = stabilityFilter.update(filteredSample);
                     predictedValue = kfResult.predicted;
                     isStable = kfResult.isStable;
+                    stabilizationTime = kfResult.stabilizationTime;
                     break;
                     
                 case 'wavelet':
@@ -645,6 +823,7 @@
                     const wvResult = stabilityFilter.update(filteredSample);
                     predictedValue = wvResult.predicted;
                     isStable = wvResult.isStable;
+                    stabilizationTime = wvResult.stabilizationTime;
                     break;
                     
                 case 'adaptive':
@@ -653,6 +832,7 @@
                     const adResult = stabilityFilter.update(filteredSample);
                     predictedValue = adResult.predicted;
                     isStable = adResult.isStable;
+                    stabilizationTime = adResult.stabilizationTime;
                     break;
                     
                 case 'combined':
@@ -662,6 +842,7 @@
                     // 组合滤波器自带稳定性，使用较小的阈值判断
                     const combResult = stabilityFilter.update(filteredSample);
                     isStable = combResult.variance < 0.2;
+                    stabilizationTime = combResult.stabilizationTime;
                     break;
                     
                 default:
@@ -669,10 +850,11 @@
                     const defResult = stabilityFilter.update(filteredSample);
                     predictedValue = defResult.predicted;
                     isStable = defResult.isStable;
+                    stabilizationTime = defResult.stabilizationTime;
             }
 
             // 3. 更新性能指标
-            updateMetrics(rawSample, filteredSample, predictedValue, isStable);
+            updateMetrics(rawSample, filteredSample, predictedValue, isStable, stabilizationTime, params.targetWeight);
 
             // 4. 更新缓冲区
             dataRaw.shift(); dataRaw.push(rawSample);
@@ -761,16 +943,19 @@
             ctx.fillStyle = 'rgba(255,255,255,0.9)';
             ctx.font = 'bold 16px Arial';
             const algoName = document.getElementById('filterAlgorithm').options[document.getElementById('filterAlgorithm').selectedIndex].text;
-            ctx.fillText(`当前算法: ${algoName}`, 10, 25);
+            ctx.fillText(`算法: ${algoName}`, 10, 25);
+            
+            // 绘制目标重量
+            ctx.fillText(`目标重量: ${params.targetWeight.toFixed(1)}g`, 10, 50);
             
             // 绘制当前读数
-            ctx.font = '14px Arial';
-            ctx.fillText(`当前读数: ${document.getElementById('metric-current').innerText}`, 10, 50);
+            const currentValue = parseFloat(document.getElementById('metric-current').innerText);
+            ctx.fillText(`当前读数: ${currentValue.toFixed(1)}g`, 10, 75);
             
             // 绘制稳定性状态
             const isStable = document.getElementById('stability-indicator').classList.contains('stable');
             ctx.fillStyle = isStable ? '#00ff00' : '#ff4444';
-            ctx.fillText(`状态: ${isStable ? '稳定' : '不稳定'}`, 10, 75);
+            ctx.fillText(`状态: ${isStable ? '稳定' : '不稳定'}`, 10, 100);
         }
 
         // 初始化算法信息
