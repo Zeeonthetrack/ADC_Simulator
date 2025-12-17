@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ADC 慢速漂移与滤波模拟器</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #1e1e1e;
+            color: #e0e0e0;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h2 {
+            margin-bottom: 10px;
+            color: #61dafb;
+        }
+
+        .controls {
+            background-color: #2d2d2d;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            justify-content: center;
+            width: 100%;
+            max-width: 800px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        label {
+            font-size: 0.85rem;
+            margin-bottom: 5px;
+            color: #aaa;
+        }
+
+        input[type="range"] {
+            width: 150px;
+            cursor: pointer;
+        }
+
+        .value-display {
+            font-size: 0.8rem;
+            color: #61dafb;
+            margin-left: 5px;
+        }
+
+        .canvas-container {
+            position: relative;
+            width: 100%;
+            max-width: 800px;
+            height: 400px;
+            background-color: #000;
+            border: 2px solid #333;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        .legend {
+            display: flex;
+            gap: 20px;
+            margin-top: 10px;
+            font-size: 0.9rem;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+        }
+
+        .color-box {
+            width: 12px;
+            height: 12px;
+            margin-right: 5px;
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>ADC 慢速漂移抑制模拟</h2>
+
+    <div class="controls">
+        <div class="control-group">
+            <label>漂移幅度 (Drift Amp) <span id="val-drift" class="value-display">50</span></label>
+            <input type="range" id="driftAmp" min="0" max="150" value="80">
+        </div>
+        <div class="control-group">
+            <label>漂移速度 (Drift Freq) <span id="val-speed" class="value-display">Slow</span></label>
+            <input type="range" id="driftSpeed" min="1" max="50" value="10">
+        </div>
+        <div class="control-group">
+            <label>高频噪声 (HF Noise) <span id="val-noise" class="value-display">5</span></label>
+            <input type="range" id="noiseAmp" min="0" max="20" value="5">
+        </div>
+        <div class="control-group">
+            <label>高通滤波系数 (alpha) <span id="val-alpha" class="value-display">0.98</span></label>
+            <input type="range" id="filterAlpha" min="800" max="999" value="995">
+        </div>
+    </div>
+
+    <div class="canvas-container">
+        <canvas id="scopeCanvas"></canvas>
+    </div>
+
+    <div class="legend">
+        <div class="legend-item">
+            <div class="color-box" style="background-color: #ff4444;"></div>
+            <span>原始数据 (Raw)</span>
+        </div>
+        <div class="legend-item">
+            <div class="color-box" style="background-color: #4444ff;"></div>
+            <span>漂移分量 (Drift)</span>
+        </div>
+        <div class="legend-item">
+            <div class="color-box" style="background-color: #00ff00;"></div>
+            <span>最终滤波后 (Filtered)</span>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. 基础设置 ---
+        const canvas = document.getElementById('scopeCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // 适应屏幕分辨率
+        function resizeCanvas() {
+            canvas.width = canvas.parentElement.clientWidth;
+            canvas.height = canvas.parentElement.clientHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // 参数控制
+        const params = {
+            driftAmp: 80,
+            driftSpeed: 0.002, // 对应滑块
+            noiseAmp: 5,
+            alpha: 0.995       // 高通滤波器系数
+        };
+
+        // UI 绑定
+        document.getElementById('driftAmp').oninput = function() { 
+            params.driftAmp = parseInt(this.value); 
+            document.getElementById('val-drift').innerText = this.value;
+        };
+        document.getElementById('driftSpeed').oninput = function() { 
+            // 转换滑块值到极低频率
+            let val = parseInt(this.value);
+            params.driftSpeed = val * 0.0002; 
+            document.getElementById('val-speed').innerText = val;
+        };
+        document.getElementById('noiseAmp').oninput = function() { 
+            params.noiseAmp = parseInt(this.value); 
+            document.getElementById('val-noise').innerText = this.value;
+        };
+        document.getElementById('filterAlpha').oninput = function() { 
+            let val = parseInt(this.value);
+            params.alpha = val / 1000; 
+            document.getElementById('val-alpha').innerText = params.alpha.toFixed(3);
+        };
+
+        // --- 2. 信号生成工具 (Perlin Noise 简化版用于模拟随机慢波) ---
+        // 简单的平滑噪声生成器，用于模拟非正弦的随机漂移
+        const perm = [];
+        let gradP = [];
+        
+        function seedNoise() {
+            gradP = [];
+            for(let i=0; i<256; i++) {
+                gradP.push(Math.random() * 2 - 1); // -1 to 1
+            }
+        }
+        seedNoise();
+
+        // 简单的线性插值噪声，产生平滑的随机波
+        function getSmoothNoise(t) {
+            // t 是时间因子
+            const index = Math.floor(t) % 256;
+            const nextIndex = (index + 1) % 256;
+            const factor = t - Math.floor(t);
+            // 简单的余弦插值让波形更圆润
+            const smoothFactor = (1 - Math.cos(factor * Math.PI)) / 2;
+            return gradP[index] * (1 - smoothFactor) + gradP[nextIndex] * smoothFactor;
+        }
+
+        // --- 3. 滤波器实现 ---
+
+        // DC Blocker (高通滤波器)
+        // y[n] = x[n] - x[n-1] + alpha * y[n-1]
+        // 这是一种非常高效的去除直流和低频漂移的算法
+        let prevX = 0;
+        let prevY = 0;
+
+        function dcBlocker(input, alpha) {
+            let output = input - prevX + alpha * prevY;
+            prevX = input;
+            prevY = output;
+            return output;
+        }
+
+        // 简单的移动平均滤波器 (Low Pass) 去除高频噪声
+        const maWindowSize = 10;
+        const maBuffer = new Array(maWindowSize).fill(0);
+        let maIndex = 0;
+        let maSum = 0;
+
+        function movingAverage(input) {
+            maSum -= maBuffer[maIndex];
+            maBuffer[maIndex] = input;
+            maSum += input;
+            maIndex = (maIndex + 1) % maWindowSize;
+            return maSum / maWindowSize;
+        }
+
+        // --- 4. 主循环与绘图 ---
+        
+        // 数据缓冲区
+        const maxPoints = 800;
+        const dataRaw = new Array(maxPoints).fill(0);
+        const dataDrift = new Array(maxPoints).fill(0);
+        const dataFiltered = new Array(maxPoints).fill(0);
+        
+        let time = 0;
+        let signalBase = 0; // 模拟真实的有用信号（例如每隔一段时间跳变一下）
+        let signalTimer = 0;
+
+        function loop() {
+            // 1. 生成模拟数据
+            time += 1;
+            
+            // A. 慢速漂移 (模拟 10秒+ 周期的随机波浪)
+            // 使用 getSmoothNoise 产生非正弦的随机起伏
+            let drift = getSmoothNoise(time * params.driftSpeed) * params.driftAmp;
+            
+            // B. 高频噪声 (White Noise)
+            let hfNoise = (Math.random() - 0.5) * params.noiseAmp * 2;
+
+            // C. 有用信号 (假设是一个方波或者脉冲，为了观察滤波器是否破坏波形)
+            signalTimer++;
+            if (signalTimer > 200) {
+                signalBase = (signalBase === 0) ? 50 : 0; // 每隔一段时间切换
+                signalTimer = 0;
+            }
+
+            // 合成 Raw 数据
+            let rawSample = signalBase + drift + hfNoise;
+
+            // 2. 滤波处理
+            // 第一步：先做一点点移动平均去除高频刺刺的噪声 (可选，但推荐)
+            let maSample = movingAverage(rawSample);
+
+            // 第二步：核心步骤 -> DC Blocker 去除慢速漂移
+            // 注意：DC Blocker 可能会在信号突变时产生一点反向过冲，这是正常的物理特性
+            let filteredSample = dcBlocker(maSample, params.alpha);
+
+            // 3. 更新缓冲区
+            dataRaw.shift(); dataRaw.push(rawSample);
+            dataDrift.shift(); dataDrift.push(drift); // 仅用于显示对比
+            dataFiltered.shift(); dataFiltered.push(filteredSample);
+
+            // 4. 绘图
+            draw();
+
+            requestAnimationFrame(loop);
+        }
+
+        function draw() {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            const centerY = canvas.height / 2;
+            const scaleX = canvas.width / maxPoints;
+
+            // 绘制网格
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(0, centerY);
+            ctx.lineTo(canvas.width, centerY);
+            ctx.stroke();
+
+            // 绘制漂移层 (蓝色，细线)
+            ctx.strokeStyle = '#4444ff';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            for (let i = 0; i < maxPoints; i++) {
+                let x = i * scaleX;
+                let y = centerY - dataDrift[i];
+                if (i===0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+
+            // 绘制原始数据 (红色)
+            ctx.strokeStyle = '#ff4444';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            for (let i = 0; i < maxPoints; i++) {
+                let x = i * scaleX;
+                let y = centerY - dataRaw[i];
+                if (i===0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+
+            // 绘制滤波后数据 (绿色)
+            ctx.strokeStyle = '#00ff00';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            for (let i = 0; i < maxPoints; i++) {
+                let x = i * scaleX;
+                let y = centerY - dataFiltered[i] + 50; // 稍微向下偏移一点以便观察，或者保持在中心
+                // 这里为了对比，我们把滤波后的信号放在中心
+                y = centerY - dataFiltered[i];
+                if (i===0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+        }
+
+        // 启动
+        loop();
+
+    </script>
+</body>
+</html>
